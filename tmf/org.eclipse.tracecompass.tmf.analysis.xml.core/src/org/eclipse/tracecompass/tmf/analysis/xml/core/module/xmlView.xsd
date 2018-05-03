@@ -95,6 +95,9 @@
 			<xs:element maxOccurs="unbounded" minOccurs="0" name="entry" type="viewEntry" >
 				<xs:annotation>
 					<xs:documentation>Define child entries for this entry. Child entries will be shown as children of this entry (with or without additional parent/child relationship defined through the viewEntry element's "parent" element).</xs:documentation></xs:annotation></xs:element>
+			<xs:element maxOccurs="1" minOccurs="0" name="stateText" type="viewStateAttribute" >
+				<xs:annotation>
+					<xs:documentation>Define child entries for this entry. Child entries will be shown as children of this entry (with or without additional parent/child relationship defined through the viewEntry element's "parent" element).</xs:documentation></xs:annotation></xs:element>
 		</xs:sequence>
 		<xs:attribute name="path" type="xs:string" use="required" >
 			<xs:annotation>

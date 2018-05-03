@@ -46,6 +46,7 @@ import org.eclipse.tracecompass.internal.tmf.analysis.xml.core.model.ITmfXmlStat
 import org.eclipse.tracecompass.internal.tmf.analysis.xml.core.model.readonly.TmfXmlReadOnlyModelFactory;
 import org.eclipse.tracecompass.internal.tmf.analysis.xml.core.module.IXmlStateSystemContainer;
 import org.eclipse.tracecompass.statesystem.core.ITmfStateSystem;
+import org.eclipse.tracecompass.statesystem.core.exceptions.AttributeNotFoundException;
 import org.eclipse.tracecompass.statesystem.core.exceptions.StateSystemDisposedException;
 import org.eclipse.tracecompass.statesystem.core.exceptions.TimeRangeException;
 import org.eclipse.tracecompass.statesystem.core.interval.ITmfStateInterval;
@@ -88,6 +89,7 @@ public class XmlTimeGraphDataProvider extends AbstractTmfTraceDataProvider imple
      */
     private final Table<ITmfStateSystem, Integer, Long> fBaseQuarkToId = HashBasedTable.create();
     private final Map<Long, Pair<ITmfStateSystem, Integer>> fIDToDisplayQuark = new HashMap<>();
+    private static String stateTextinSS = new String();
 
 
     /**
@@ -173,6 +175,7 @@ public class XmlTimeGraphDataProvider extends AbstractTmfTraceDataProvider imple
          */
 
         List<Element> displayElements = TmfXmlUtils.getChildElements(entryElement, TmfXmlStrings.DISPLAY_ELEMENT);
+        List<Element> stateTextElements = TmfXmlUtils.getChildElements(entryElement, TmfXmlStrings.STATE_TEXT);
         List<Element> entryElements = TmfXmlUtils.getChildElements(entryElement, TmfXmlStrings.ENTRY_ELEMENT);
 
         if (displayElements.isEmpty() && entryElements.isEmpty()) {
@@ -224,6 +227,11 @@ public class XmlTimeGraphDataProvider extends AbstractTmfTraceDataProvider imple
         Map<String, Builder> entryMap = new HashMap<>();
         if (!displayElements.isEmpty()) {
             displayElement = displayElements.get(0);
+        }
+        Element stateTextElement = null;
+        if (!stateTextElements.isEmpty()) {
+            stateTextElement = stateTextElements.get(0);
+            stateTextinSS = stateTextElement.getAttribute(TmfXmlStrings.VALUE);
         }
         for (int quark : quarks) {
             Builder currentEntry = parentEntry;
@@ -356,7 +364,7 @@ public class XmlTimeGraphDataProvider extends AbstractTmfTraceDataProvider imple
             }
             ITimeGraphRowModel row = quarkToRow.get(interval.getAttribute());
             if (row != null) {
-                row.getStates().add(getStateFromInterval(interval));
+                row.getStates().add(getStateFromInterval(ss,interval));
             }
         }
         for (ITimeGraphRowModel model : quarkToRow.values()) {
@@ -365,20 +373,30 @@ public class XmlTimeGraphDataProvider extends AbstractTmfTraceDataProvider imple
         return quarkToRow.values();
     }
 
-    private static @NonNull TimeGraphState getStateFromInterval(ITmfStateInterval statusInterval) {
+    private static @NonNull TimeGraphState getStateFromInterval(ITmfStateSystem ss, ITmfStateInterval statusInterval) throws StateSystemDisposedException {
         long time = statusInterval.getStartTime();
         long duration = statusInterval.getEndTime() - time;
         Object o = statusInterval.getValue();
-        if (o instanceof Integer) {
-            return new TimeGraphState(time, duration, ((Integer) o).longValue(), String.valueOf(o));
-        } else if (o instanceof Long) {
-            long l = (long) o;
-            return new TimeGraphState(time, duration, l, "0x" + Long.toHexString(l)); //$NON-NLS-1$
-        } else if (o instanceof String) {
-            return new TimeGraphState(time, duration, Integer.MIN_VALUE, (String) o);
-        } else if (o instanceof Double) {
-            return new TimeGraphState(time, duration, ((Double) o).longValue());
+        String label = "";
+        try {
+            int stateTextQuark = ss.getQuarkRelative(ss.getParentAttributeQuark((statusInterval.getAttribute())), stateTextinSS);
+            Object labelValue = ss.querySingleState(time, stateTextQuark).getValue();
+            if (labelValue != null && o != null && !labelValue.toString().equals(o.toString())) {
+                label = labelValue.toString();
+            }
+        } catch (AttributeNotFoundException e) {
+            // TODO Auto-generated catch block
         }
+            if (o instanceof Integer) {
+                return new TimeGraphState(time, duration, ((Integer) o).longValue(), label);
+            } else if (o instanceof Long) {
+                long l = (long) o;
+                return new TimeGraphState(time, duration, l, label); //$NON-NLS-1$
+            } else if (o instanceof String) {
+                return new TimeGraphState(time, duration, Integer.MIN_VALUE, label);
+            } else if (o instanceof Double) {
+                return new TimeGraphState(time, duration, ((Double) o).longValue(), label);
+            }
         return new TimeGraphState(time, duration, -1, String.valueOf(-1));
     }
 

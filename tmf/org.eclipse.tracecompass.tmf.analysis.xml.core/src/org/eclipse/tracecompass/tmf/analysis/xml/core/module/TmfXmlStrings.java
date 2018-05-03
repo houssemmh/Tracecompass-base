@@ -59,6 +59,10 @@ public interface TmfXmlStrings {
      */
     static final String DISPLAY_TEXT = "displayText";
     /**
+     * @since 2.5
+     */
+    static final String STATE_TEXT = "stateText";
+    /**
      * @since 2.3
      */
     static final String DISPLAY_ELEMENT = "display";

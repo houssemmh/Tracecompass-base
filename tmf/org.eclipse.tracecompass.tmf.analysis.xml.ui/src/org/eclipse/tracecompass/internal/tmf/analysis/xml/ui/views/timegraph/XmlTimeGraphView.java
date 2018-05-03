@@ -41,7 +41,7 @@ import org.eclipse.tracecompass.tmf.ui.views.TmfViewFactory;
 import org.eclipse.tracecompass.tmf.ui.views.timegraph.BaseDataProviderTimeGraphView;
 import org.eclipse.tracecompass.tmf.ui.widgets.timegraph.ITimeGraphPresentationProvider;
 import org.eclipse.tracecompass.tmf.ui.widgets.timegraph.model.ITimeGraphEntry;
-import org.eclipse.tracecompass.tmf.ui.widgets.timegraph.model.TimeEvent;
+import org.eclipse.tracecompass.tmf.ui.widgets.timegraph.model.NamedTimeEvent;
 import org.eclipse.tracecompass.tmf.ui.widgets.timegraph.model.TimeGraphEntry;
 import org.w3c.dom.Element;
 
@@ -283,20 +283,20 @@ public class XmlTimeGraphView extends BaseDataProviderTimeGraphView {
     }
 
     @Override
-    protected TimeEvent createTimeEvent(TimeGraphEntry entry, ITimeGraphState state) {
+    protected NamedTimeEvent createTimeEvent(TimeGraphEntry entry, ITimeGraphState state) {
         String label = state.getLabel();
         if (state.getValue() == Integer.MIN_VALUE && label != null) {
             // String interval
             int status = getStringIndex(label);
 
-            return new TimeEvent(entry, state.getStartTime(), state.getDuration(), status);
+            return new NamedTimeEvent(entry, state.getStartTime(), state.getDuration(), status, label);
         }
         int status = (int) state.getValue();
         XmlPresentationProvider pres = getPresentationProvider();
         if (label != null && !pres.hasIndex(status) && !label.equals(String.valueOf(-1))) {
             status = getStringIndex(label);
         }
-        return new TimeEvent(entry, state.getStartTime(), state.getDuration(), status);
+        return new NamedTimeEvent(entry, state.getStartTime(), state.getDuration(), status, label);
     }
 
     private int getStringIndex(String state) {

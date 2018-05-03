@@ -33,6 +33,7 @@ import org.eclipse.tracecompass.tmf.ui.widgets.timegraph.StateItem;
 import org.eclipse.tracecompass.tmf.ui.widgets.timegraph.TimeGraphPresentationProvider;
 import org.eclipse.tracecompass.tmf.ui.widgets.timegraph.model.ITimeEvent;
 import org.eclipse.tracecompass.tmf.ui.widgets.timegraph.model.ITimeGraphEntry;
+import org.eclipse.tracecompass.tmf.ui.widgets.timegraph.model.NamedTimeEvent;
 import org.eclipse.tracecompass.tmf.ui.widgets.timegraph.model.TimeEvent;
 import org.eclipse.tracecompass.tmf.ui.widgets.timegraph.model.TimeGraphEntry;
 import org.eclipse.tracecompass.tmf.ui.widgets.timegraph.widgets.Utils;
@@ -153,10 +154,15 @@ public class XmlPresentationProvider extends TimeGraphPresentationProvider {
         if (eventName == null) {
             return;
         }
+        String label = eventName;
+        if (!((NamedTimeEvent)event).getLabel().isEmpty()) {
+            label = ((NamedTimeEvent)event).getLabel();
+        }
+
 
         Color stateColor = gc.getBackground();
         gc.setForeground(Utils.getDistinctColor(stateColor.getRGB()));
-        Utils.drawText(gc, eventName, bounds.x, bounds.y, bounds.width, bounds.height, true, true);
+        Utils.drawText(gc, label, bounds.x, bounds.y, bounds.width, bounds.height, true, true);
     }
 
     @Override
