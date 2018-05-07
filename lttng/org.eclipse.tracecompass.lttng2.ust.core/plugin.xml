@@ -61,7 +61,7 @@
             id="org.eclipse.linuxtools.lttng2.ust.analysis.java"
             name="Java Analysis">
          <tracetype
-               class="org.eclipse.tracecompass.lttng2.ust.core.trace.LttngUstTrace">
+               class="org.eclipse.tracecompass.tmf.core.trace.experiment.TmfExperiment">
          </tracetype>
       </module>
    </extension>

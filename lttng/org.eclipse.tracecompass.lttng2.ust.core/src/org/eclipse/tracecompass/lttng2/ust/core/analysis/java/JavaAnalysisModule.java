@@ -9,23 +9,12 @@
 package org.eclipse.tracecompass.lttng2.ust.core.analysis.java;
 
 import static org.eclipse.tracecompass.common.core.NonNullUtils.checkNotNull;
-import static org.eclipse.tracecompass.common.core.NonNullUtils.nullToEmptyString;
-
-import java.util.Set;
 
 import org.eclipse.jdt.annotation.NonNull;
-import org.eclipse.jdt.annotation.Nullable;
-import org.eclipse.tracecompass.lttng2.ust.core.trace.LttngUstTrace;
-import org.eclipse.tracecompass.lttng2.ust.core.trace.layout.ILttngUstEventLayout;
-import org.eclipse.tracecompass.tmf.core.analysis.requirements.TmfAbstractAnalysisRequirement;
-import org.eclipse.tracecompass.tmf.core.analysis.requirements.TmfAbstractAnalysisRequirement.PriorityLevel;
-import org.eclipse.tracecompass.tmf.core.analysis.requirements.TmfAnalysisEventRequirement;
-import org.eclipse.tracecompass.tmf.core.exceptions.TmfAnalysisException;
+import org.eclipse.tracecompass.analysis.os.linux.core.trace.DefaultEventLayout;
+import org.eclipse.tracecompass.analysis.os.linux.core.trace.IKernelAnalysisEventLayout;
 import org.eclipse.tracecompass.tmf.core.statesystem.ITmfStateProvider;
 import org.eclipse.tracecompass.tmf.core.statesystem.TmfStateSystemAnalysisModule;
-import org.eclipse.tracecompass.tmf.core.trace.ITmfTrace;
-
-import com.google.common.collect.ImmutableSet;
 
 /**
  * This analysis module creates a stateprovider that keeps track of the memory
@@ -41,59 +30,10 @@ public class JavaAnalysisModule extends TmfStateSystemAnalysisModule {
      */
     public static final @NonNull String ID = "org.eclipse.linuxtools.lttng2.ust.analysis.java"; //$NON-NLS-1$
 
-    /** The analysis's requirements. Only set after the trace is set. */
-    private @Nullable Set<TmfAbstractAnalysisRequirement> fAnalysisRequirements;
-
     @Override
     protected ITmfStateProvider createStateProvider() {
-        return new JavaStateProvider(checkNotNull(getTrace()));
-    }
-
-    /**
-     * @since 1.0
-     */
-    @Override
-    public boolean setTrace(ITmfTrace trace) throws TmfAnalysisException {
-        if (!(trace instanceof LttngUstTrace)) {
-            return false;
-        }
-        return super.setTrace(trace);
-    }
-
-    /**
-     * @since 3.0
-     */
-    @Override
-    public LttngUstTrace getTrace() {
-        return (LttngUstTrace) super.getTrace();
-    }
-
-    @Override
-    public Iterable<TmfAbstractAnalysisRequirement> getAnalysisRequirements() {
-        Set<TmfAbstractAnalysisRequirement> requirements = fAnalysisRequirements;
-        if (requirements == null) {
-            LttngUstTrace trace = getTrace();
-            ILttngUstEventLayout layout;
-            if (trace == null) {
-                layout = ILttngUstEventLayout.DEFAULT_LAYOUT;
-            } else {
-                layout = trace.getEventLayout();
-            }
-
-            @NonNull Set<@NonNull String> requiredEvents = ImmutableSet.of(
-                  );
-
-            /* Initialize the requirements for the analysis: domain and events */
-            TmfAbstractAnalysisRequirement eventsReq = new TmfAnalysisEventRequirement(requiredEvents, PriorityLevel.MANDATORY);
-            /*
-             * In order to have these events, the libc wrapper with probes should be
-             * loaded
-             */
-            eventsReq.addInformation(nullToEmptyString("Something is missing")); //$NON-NLS-1$
-
-            requirements = ImmutableSet.of(eventsReq);
-            fAnalysisRequirements = requirements;
-        }
-        return requirements;
+        IKernelAnalysisEventLayout layout;
+        layout = DefaultEventLayout.getInstance();
+        return new JavaStateProvider(checkNotNull(getTrace()),layout);
     }
 }
