@@ -20,6 +20,7 @@ import java.util.Map.Entry;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.SubMonitor;
 import org.eclipse.jdt.annotation.NonNull;
+import org.eclipse.jdt.annotation.Nullable;
 import org.eclipse.tracecompass.internal.provisional.tmf.core.model.filters.SelectionTimeQueryFilter;
 import org.eclipse.tracecompass.internal.provisional.tmf.core.model.filters.TimeQueryFilter;
 import org.eclipse.tracecompass.internal.provisional.tmf.core.model.timegraph.ITimeGraphDataProvider;
@@ -33,6 +34,7 @@ import org.eclipse.tracecompass.internal.tmf.ui.Activator;
 import org.eclipse.tracecompass.statesystem.core.StateSystemUtils;
 import org.eclipse.tracecompass.tmf.core.dataprovider.DataProviderManager;
 import org.eclipse.tracecompass.tmf.core.trace.ITmfTrace;
+import org.eclipse.tracecompass.tmf.core.trace.TmfTraceManager;
 import org.eclipse.tracecompass.tmf.ui.widgets.timegraph.TimeGraphPresentationProvider;
 import org.eclipse.tracecompass.tmf.ui.widgets.timegraph.model.ITimeEvent;
 import org.eclipse.tracecompass.tmf.ui.widgets.timegraph.model.ITimeGraphEntry;
@@ -386,4 +388,37 @@ public class BaseDataProviderTimeGraphView extends AbstractTimeGraphView {
         return new TimeEvent(entry, state.getStartTime(), state.getDuration(), (int) state.getValue());
     }
 
+    @Override
+    protected List<@NonNull ILinkEvent> getLinkList(long zoomStartTime, long zoomEndTime, long resolution,
+            @NonNull IProgressMonitor monitor) {
+        List<@NonNull TimeGraphEntry> traceEntries = getEntryList(getTrace());
+        if (traceEntries == null) {
+            return Collections.emptyList();
+        }
+        List<@NonNull ILinkEvent> linkList = new ArrayList<>();
+        List<@NonNull Long> times = StateSystemUtils.getTimes(zoomStartTime, zoomEndTime, resolution);
+        TimeQueryFilter queryFilter = new TimeQueryFilter(times);
+
+        for (TraceEntry entry : Iterables.filter(traceEntries, TraceEntry.class)) {
+            ITimeGraphDataProvider<? extends TimeGraphEntryModel> provider = entry.getProvider();
+            TmfModelResponse<List<ITimeGraphArrow>> response = provider.fetchArrows(queryFilter, monitor);
+            List<ITimeGraphArrow> model = response.getModel();
+
+            if (model != null) {
+                for (ITimeGraphArrow arrow : model) {
+                    ITimeGraphEntry prevEntry = fEntries.get(arrow.getSourceId());
+                    ITimeGraphEntry nextEntry = fEntries.get(arrow.getDestinationId());
+                    if (prevEntry != null && nextEntry != null) {
+                        linkList.add(new TimeLinkEvent(prevEntry, nextEntry, arrow.getStartTime(), arrow.getDuration(), 0));
+                    }
+                }
+            }
+        }
+        return linkList;
+    }
+
+    @Override
+    protected @NonNull Iterable<ITmfTrace> getTracesToBuild(@Nullable ITmfTrace trace) {
+        return TmfTraceManager.getTraceSetWithExperiment(trace);
+    }
 }
