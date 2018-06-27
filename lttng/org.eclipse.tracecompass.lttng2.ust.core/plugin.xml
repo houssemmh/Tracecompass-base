@@ -63,6 +63,9 @@
          <tracetype
                class="org.eclipse.tracecompass.tmf.core.trace.experiment.TmfExperiment">
          </tracetype>
+         <tracetype
+               class="org.eclipse.tracecompass.lttng2.ust.core.trace.LttngUstTrace">
+         </tracetype>
       </module>
    </extension>
    <extension

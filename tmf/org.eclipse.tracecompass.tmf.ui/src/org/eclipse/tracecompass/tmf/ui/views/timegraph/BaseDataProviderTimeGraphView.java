@@ -389,35 +389,6 @@ public class BaseDataProviderTimeGraphView extends AbstractTimeGraphView {
     }
 
     @Override
-    protected List<@NonNull ILinkEvent> getLinkList(long zoomStartTime, long zoomEndTime, long resolution,
-            @NonNull IProgressMonitor monitor) {
-        List<@NonNull TimeGraphEntry> traceEntries = getEntryList(getTrace());
-        if (traceEntries == null) {
-            return Collections.emptyList();
-        }
-        List<@NonNull ILinkEvent> linkList = new ArrayList<>();
-        List<@NonNull Long> times = StateSystemUtils.getTimes(zoomStartTime, zoomEndTime, resolution);
-        TimeQueryFilter queryFilter = new TimeQueryFilter(times);
-
-        for (TraceEntry entry : Iterables.filter(traceEntries, TraceEntry.class)) {
-            ITimeGraphDataProvider<? extends TimeGraphEntryModel> provider = entry.getProvider();
-            TmfModelResponse<List<ITimeGraphArrow>> response = provider.fetchArrows(queryFilter, monitor);
-            List<ITimeGraphArrow> model = response.getModel();
-
-            if (model != null) {
-                for (ITimeGraphArrow arrow : model) {
-                    ITimeGraphEntry prevEntry = fEntries.get(arrow.getSourceId());
-                    ITimeGraphEntry nextEntry = fEntries.get(arrow.getDestinationId());
-                    if (prevEntry != null && nextEntry != null) {
-                        linkList.add(new TimeLinkEvent(prevEntry, nextEntry, arrow.getStartTime(), arrow.getDuration(), 0));
-                    }
-                }
-            }
-        }
-        return linkList;
-    }
-
-    @Override
     protected @NonNull Iterable<ITmfTrace> getTracesToBuild(@Nullable ITmfTrace trace) {
         return TmfTraceManager.getTraceSetWithExperiment(trace);
     }
