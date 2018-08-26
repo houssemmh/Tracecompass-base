@@ -48,6 +48,7 @@ public class JavaStateProvider extends AbstractTmfStateProvider {
     private final @NonNull IKernelAnalysisEventLayout fLayout;
     private ArrayList<Long> stopped_threads = new ArrayList<>();
     private HashMap<Long, ThreadInfo> threads = new HashMap<>();
+    Pile pile = null;
 
     /**
      * Constructor
@@ -400,27 +401,27 @@ public class JavaStateProvider extends AbstractTmfStateProvider {
                     switch (target.type) {
                     case "JavaThreads":
                         ss.modifyAttribute(ts, TmfStateValue.nullValue(), cpustatusQ);
-                        ss.modifyAttribute(ts+1, TmfStateValue.newValueLong(1001), cpustatusQ);
+                        ss.modifyAttribute(ts + 1, TmfStateValue.newValueLong(1001), cpustatusQ);
                         break;
                     case "VMThreads":
                         ss.modifyAttribute(ts, TmfStateValue.nullValue(), cpustatusQ);
-                        ss.modifyAttribute(ts+1, TmfStateValue.newValueLong(1002), cpustatusQ);
+                        ss.modifyAttribute(ts + 1, TmfStateValue.newValueLong(1002), cpustatusQ);
                         break;
                     case "GCThreads":
                         ss.modifyAttribute(ts, TmfStateValue.nullValue(), cpustatusQ);
-                        ss.modifyAttribute(ts+1, TmfStateValue.newValueLong(1003), cpustatusQ);
+                        ss.modifyAttribute(ts + 1, TmfStateValue.newValueLong(1003), cpustatusQ);
                         break;
                     case "CompilerThreads":
                         ss.modifyAttribute(ts, TmfStateValue.nullValue(), cpustatusQ);
-                        ss.modifyAttribute(ts+1, TmfStateValue.newValueLong(1004), cpustatusQ);
+                        ss.modifyAttribute(ts + 1, TmfStateValue.newValueLong(1004), cpustatusQ);
                         break;
                     default:
                         break;
                     }
-                    ss.modifyAttribute(ts, TmfStateValue.newValueString(target.name+" ("+targettid.toString()+")"), cpuinfoQ);
+                    ss.modifyAttribute(ts, TmfStateValue.newValueString(target.name + " (" + targettid.toString() + ")"), cpuinfoQ);
                 } else {
                     ss.modifyAttribute(ts, TmfStateValue.newValueLong(1005), cpustatusQ);
-                    ss.modifyAttribute(ts, TmfStateValue.newValueString(targetcomm+" ("+targettid.toString()+")"), cpuinfoQ);
+                    ss.modifyAttribute(ts, TmfStateValue.newValueString(targetcomm + " (" + targettid.toString() + ")"), cpuinfoQ);
                 }
 
             } else {
@@ -429,11 +430,135 @@ public class JavaStateProvider extends AbstractTmfStateProvider {
 
         }
             break;
+
+        case "block_rq_insert": { //$NON-NLS-1$
+
+            Long tid = (Long) event.getContent().getField("context._tid").getValue();
+            Long disk = (Long) event.getContent().getField("dev").getValue();
+            Long sector = (Long) event.getContent().getField("sector").getValue();
+            Long size = (Long) event.getContent().getField("nr_sector").getValue();
+            String processname = event.getContent().getField("comm").getValue().toString();
+            if(disk.longValue()!=8388624) {
+                break;
+            }
+            if(sector.longValue() <= 0 || size.longValue() <= 0) {
+                break;
+            }
+
+
+            int ioQ = ss.getQuarkAbsoluteAndAdd("IO");
+            int diskQ = ss.getQuarkRelativeAndAdd(ioQ, "sdb");
+            if (pile ==null) {
+                pile = new Pile(ss, diskQ);
+            }
+
+            ThreadInfo target = threads.get(tid);
+            if (target != null) {
+                pile.insert(sector, ts, size, processname,true);
+            } else {
+                pile.insert(sector, ts, size, processname,false);
+            }
+        }
+            break;
+
+        case "block_rq_complete": { //$NON-NLS-1$
+            Long tid = (Long) event.getContent().getField("context._tid").getValue();
+            Long disk = (Long) event.getContent().getField("dev").getValue();
+            Long sector = (Long) event.getContent().getField("sector").getValue();
+            Long size = (Long) event.getContent().getField("nr_sector").getValue();
+            if(disk.longValue()!=8388624) {
+                break;
+            }
+            if(sector.longValue() <= 0 || size.longValue() <= 0) {
+                break;
+            }
+
+
+            pile.remove(sector, ts);
+
+        }
+            break;
         default:
             /* Ignore other event types */
             break;
         }
+    }
 
+    /**
+     * @author houssemmh
+     *
+     */
+    public class Pile {
+        private Integer num_elements = 0; // Employee name
+        private HashMap<Long, Long> queue = new HashMap<>();
+        private HashMap<Long, Long> requests = new HashMap<>();
+        private ITmfStateSystemBuilder ss;
+        private int diskQ;
+
+        /**
+         * @param ss
+         * @param diskQ
+         *
+         */
+        public Pile(ITmfStateSystemBuilder ss, int diskQ) {
+            this.ss = ss;
+            this.diskQ = diskQ;
+        }
+
+        private Long findFirstAvailable() {
+            for (int i = 0; i < num_elements; i++) {
+                if (queue.get(Long.valueOf(i)) == null) {
+                    return Long.valueOf(i);
+                }
+            }
+            return Long.valueOf(0);
+        }
+
+        /**
+         * @param sector
+         * @param ts
+         */
+        public void insert(Long sector, long ts, Long size, String processname, boolean isjava) {
+            if(sector.longValue()==738877456) {
+                return;
+            }
+            String name = processname;
+            if(name.equals("fio")) {
+                name = "update.py";
+            }
+            Long position = findFirstAvailable();
+            queue.put(position, sector);
+            requests.put(sector, position);
+            int slotQ = ss.getQuarkRelativeAndAdd(diskQ, String.format("%03d", position));
+            int statusQ = ss.getQuarkRelativeAndAdd(slotQ, "status");
+            int infoQ = ss.getQuarkRelativeAndAdd(slotQ, "info");
+            if (isjava) {
+                ss.modifyAttribute(ts, TmfStateValue.newValueLong(1001), statusQ);
+                ss.modifyAttribute(ts, TmfStateValue.newValueString(name+" ("+String.valueOf(size/2)+"KB)"),  infoQ);
+            } else {
+                ss.modifyAttribute(ts, TmfStateValue.newValueLong(1002), statusQ);
+                ss.modifyAttribute(ts, TmfStateValue.newValueString(name+" ("+String.valueOf(size/2)+"KB)"),  infoQ);
+            }
+            num_elements++;
+        }
+
+        /**
+         * @param sector
+         * @param ts
+         */
+        public void remove(Long sector, long ts) {
+            Long position = requests.get(sector);
+                if (position != null) {
+                requests.put(position, null);
+                queue.put(position, null);
+                int slotQ = ss.getQuarkRelativeAndAdd(diskQ, String.format("%03d", position));
+                int statusQ = ss.getQuarkRelativeAndAdd(slotQ, "status");
+                int infoQ = ss.getQuarkRelativeAndAdd(slotQ, "info");
+                ss.modifyAttribute(ts, TmfStateValue.nullValue(), statusQ);
+                ss.modifyAttribute(ts, TmfStateValue.nullValue(), infoQ);
+
+            }
+        }
     }
 
     @Override
