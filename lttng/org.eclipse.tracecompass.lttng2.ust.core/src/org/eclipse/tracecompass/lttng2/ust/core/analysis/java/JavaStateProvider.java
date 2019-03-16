@@ -11,6 +11,7 @@ package org.eclipse.tracecompass.lttng2.ust.core.analysis.java;
 import static org.eclipse.tracecompass.common.core.NonNullUtils.checkNotNull;
 
 import org.eclipse.jdt.annotation.NonNull;
+import org.eclipse.osgi.framework.util.ArrayMap;
 import org.eclipse.tracecompass.analysis.os.linux.core.trace.IKernelAnalysisEventLayout;
 import org.eclipse.tracecompass.statesystem.core.ITmfStateSystemBuilder;
 import org.eclipse.tracecompass.statesystem.core.exceptions.AttributeNotFoundException;
@@ -21,9 +22,17 @@ import org.eclipse.tracecompass.tmf.core.statesystem.AbstractTmfStateProvider;
 import org.eclipse.tracecompass.tmf.core.statesystem.ITmfStateProvider;
 import org.eclipse.tracecompass.tmf.core.trace.ITmfTrace;
 import org.eclipse.tracecompass.tmf.ctf.core.event.*;
+import org.eclipse.tracecompass.tmf.ctf.core.CtfEnumPair;
+
+import java.awt.List;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.lang.String;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Map.Entry;
 
 /**
  * @author Houssem Daoud
@@ -43,37 +52,202 @@ public class JavaStateProvider extends AbstractTmfStateProvider {
         }
     }
 
+    class SectorInfo {
+        public Long sector;
+        public Long ts_start;
+        public Long ts_end;
+        public Long nr_sector;
+
+        public SectorInfo(Long sector, Long ts_start, Long nr_sector) {
+            this.sector = sector;
+            this.ts_start = ts_start;
+            this.nr_sector = nr_sector;
+        }
+    }
+
+    class DiskInfo {
+        public HashMap<Long, SectorInfo> sectors;
+        public Long dev;
+
+        public DiskInfo(Long dev) {
+            this.dev = dev;
+            this.sectors = new HashMap<>();
+        }
+    }
+
+    class PacketInfo {
+        public Long size;
+        public String daddr;
+
+        public PacketInfo(String daddr, Long size) {
+            this.daddr = daddr;
+            this.size = size;
+        }
+    }
+
+    class NetworkInfo {
+        public ArrayList<PacketInfo> packets;
+        public String name;
+
+        public NetworkInfo(String name) {
+            this.name = name;
+            this.packets = new ArrayList<>();
+        }
+    }
+
+    class HostInfo {
+        public String name;
+        public HashMap<Long, DiskInfo> disks_info;
+        public HashMap<String, NetworkInfo> networks_info;
+
+        public HostInfo(String name) {
+            this.name = name;
+            disks_info = new HashMap<>();
+            networks_info = new HashMap<>();
+        }
+    }
+
     private static final int VERSION = 1;
-    private static final Long MINUS_ONE = Long.valueOf(-1);
+
+    // private static final Long MINUS_ONE = Long.valueOf(-1);
+    // private ArrayList<Long> stopped_threads = new ArrayList<>();
+    // private HashMap<Long, ThreadInfo> threads = new HashMap<>();
     private final @NonNull IKernelAnalysisEventLayout fLayout;
-    private ArrayList<Long> stopped_threads = new ArrayList<>();
-    private HashMap<Long, ThreadInfo> threads = new HashMap<>();
+    private HashMap<String, HostInfo> hosts_info = new HashMap<>();
     Pile pile = null;
+
+    private BufferedWriter fBw;
+
+    private void show_disk_stats(long ts) {
+        synchronized (this) {
+            System.out.println("####################################### " + ts);
+            System.out.println("######## Disk");
+            for (HostInfo hostinfo : hosts_info.values()) {
+                System.out.println("Host: " + hostinfo.name);
+                for (DiskInfo disk : hostinfo.disks_info.values()) {
+                    long time = 0;
+                    long size = 0;
+                    try {
+                        for (SectorInfo sect : disk.sectors.values()) {
+                            time = time + sect.ts_end - sect.ts_start;
+                            size = size + sect.nr_sector;
+                        }
+                    } catch (Exception e) {
+                    }
+                    System.out.println("    Disk: " + disk.dev);
+                    System.out.println("        requests : " + disk.sectors.size());
+                    System.out.println("        time : " + time);
+                    System.out.println("        size : " + size / 2024 + " MB");
+                }
+            }
+        }
+    }
+
+    private void show_network_stats(long ts) {
+      synchronized (this) {
+        System.out.println("######## Network");
+        // Delete file content
+        String edgesname = "/home/houssemmh/Documents/edges.csv";
+        try {
+            FileWriter fw = new FileWriter(edgesname);
+            fBw = new BufferedWriter(fw);
+            fBw.write("from,to,value");
+            fBw.newLine();
+            fBw.close();
+        } catch (IOException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+
+        String nodesname = "/home/houssemmh/Documents/nodes.csv";
+        try {
+            FileWriter fw = new FileWriter(nodesname);
+            fBw = new BufferedWriter(fw);
+            fBw.write("id,label,value");
+            fBw.newLine();
+            fBw.close();
+        } catch (IOException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+
+        HashMap<String, NetworkInfo> networks_info = new HashMap<>();
+        for (HostInfo hostinfo : hosts_info.values()) {
+            for (NetworkInfo net : hostinfo.networks_info.values()) {
+                networks_info.put(net.name, net);
+            }
+        }
+
+        //System.out.println(file.getAbsolutePath());
+        for (HostInfo hostinfo : hosts_info.values()) {
+            // System.out.println("Host: " + hostinfo.name);
+            for (NetworkInfo net : hostinfo.networks_info.values()) {
+                System.out.println("    Network: " + net.name);
+                long size = 0;
+                HashMap<String, Long> destinations = new HashMap<>();
+                for (PacketInfo packet : net.packets) {
+                    if (!networks_info.containsKey(packet.daddr)) {
+                        continue;
+                    }
+                    if (net.name.equals(packet.daddr)) {
+                        continue;
+                    }
+                    size = size + packet.size;
+                    long count = destinations.containsKey(packet.daddr) ? destinations.get(packet.daddr) : 0;
+                    destinations.put(packet.daddr, count + packet.size);
+                }
+                try {
+                    FileWriter fw = new FileWriter(nodesname,true);
+                    fBw = new BufferedWriter(fw);
+                    fBw.write(net.name+","+net.name+","+size);
+                    fBw.newLine();
+                    fBw.close();
+                } catch (IOException e) {
+                    // TODO Auto-generated catch block
+                    e.printStackTrace();
+                }
+                System.out.println("        Packets numbers: " + net.packets.size());
+                System.out.println("        Total transferred : " + size);
+                for (Entry<String, Long> dest : destinations.entrySet()) {
+                    System.out.println("            --> " + dest.getKey() + " : " + dest.getValue());
+                    try {
+                        FileWriter fw = new FileWriter(edgesname,true);
+                        fBw = new BufferedWriter(fw);
+                        fBw.write(net.name+","+dest.getKey()+","+dest.getValue());
+                        fBw.newLine();
+                        fBw.close();
+                    } catch (IOException e) {
+                        // TODO Auto-generated catch block
+                        e.printStackTrace();
+                    }
+                }
+            }
+        }
+      }
+    }
 
     /**
      * Constructor
      *
      * @param trace
      *            trace
+     * @param layout
+     *            layout
      */
+    @SuppressWarnings("null")
     public JavaStateProvider(@NonNull ITmfTrace trace, IKernelAnalysisEventLayout layout) {
         super(trace, "Ust:Java"); //$NON-NLS-1$
         fLayout = layout;
-        threads.put(Long.valueOf(8644), new ThreadInfo(Long.valueOf(8641), "Main Thread", "JavaThreads"));
-        threads.put(Long.valueOf(6784), new ThreadInfo(Long.valueOf(8641), "Main Thread", "JavaThreads"));
     }
 
-    private static Long getVtid(ITmfEvent event) {
-        /* We checked earlier that the "vtid" context is present */
-        ITmfEventField field = event.getContent().getField("context._vtid");
-        if (field == null) {
-            return MINUS_ONE;
-        }
-        return (Long) field.getValue();
-    }
+    /*
+     * private static Long getVtid(ITmfEvent event) { // We checked earlier that the
+     * "vtid" context is present ITmfEventField field =
+     * event.getContent().getField("context._vtid"); //$NON-NLS-1$ if (field ==
+     * null) { return MINUS_ONE; } return (Long) field.getValue(); }
+     */
 
     private static int getCpu(ITmfEvent event) {
-        /* We checked earlier that the "vtid" context is present */
         return ((CtfTmfEvent) event).getCPU();
     }
 
@@ -88,396 +262,173 @@ public class JavaStateProvider extends AbstractTmfStateProvider {
     @Override
     protected void eventHandle(ITmfEvent event) {
         String name = event.getName();
+        String hostname = event.getTrace().getName();
         ITmfStateSystemBuilder ss = checkNotNull(getStateSystemBuilder());
         long ts = event.getTimestamp().toNanos();
-        int cpu = getCpu(event);
+        HostInfo hostinfo;
+        if (hosts_info.containsKey(hostname)) {
+            hostinfo = hosts_info.get(hostname);
+        } else {
+            hostinfo = new HostInfo(hostname);
+            hosts_info.put(hostname, hostinfo);
+        }
+        if (ts == event.getTrace().getEndTime().getValue()) {
+            show_network_stats(ts);
+        }
 
         switch (name) {
-        case "jvm:thread_start": { //$NON-NLS-1$
-            Long tid = getVtid(event);
-            Long pid = (Long) event.getContent().getField("context._vpid").getValue();
-            int pidQuark = ss.getQuarkAbsoluteAndAdd(pid.toString());
-            Long iscompiler = (Long) event.getContent().getField("compiler").getValue(); //$NON-NLS-1$
-            String threadtype;
-            if (iscompiler == 0) {
-                threadtype = "JavaThreads";
-            } else {
-                threadtype = "CompilerThreads";
-            }
-            int threadsQuark = ss.getQuarkRelativeAndAdd(pidQuark, threadtype);
-            int tidQuark = ss.getQuarkRelativeAndAdd(threadsQuark, tid.toString());
-            int statusQuark = ss.getQuarkRelativeAndAdd(tidQuark, "User Status"); //$NON-NLS-1$
-            String threadname = event.getContent().getField("name").getValue().toString(); //$NON-NLS-1$
-            int nameQuark = ss.getQuarkRelativeAndAdd(tidQuark, "name"); //$NON-NLS-1$
-            ss.modifyAttribute(ts, TmfStateValue.newValueString(threadname), nameQuark);
-            ss.modifyAttribute(ts, TmfStateValue.nullValue(), statusQuark);
-            threads.put(tid, new ThreadInfo(pid, threadname, threadtype));
-        }
-            break;
-        case "jvm:thread_status": { //$NON-NLS-1$
-            Long tid = getVtid(event);
-            Long pid = (Long) event.getContent().getField("context._vpid").getValue();
-            if (stopped_threads.contains(tid)) {
-                break;
-            }
-            int pidQuark = ss.getQuarkAbsoluteAndAdd(pid.toString());
-            int threadsQuark = ss.getQuarkRelativeAndAdd(pidQuark, "JavaThreads");
-            int tidQuark = ss.getQuarkRelativeAndAdd(threadsQuark, tid.toString());
-            int statusQuark = ss.getQuarkRelativeAndAdd(tidQuark, "User Status"); //$NON-NLS-1$
-            Long status = (Long) event.getContent().getField("status").getValue(); //$NON-NLS-1$
-            if (status == 2) {
-                ss.modifyAttribute(ts, TmfStateValue.nullValue(), statusQuark);
-                stopped_threads.add(tid);
-            } else {
-                ss.modifyAttribute(ts, TmfStateValue.newValueLong(status), statusQuark);
-            }
-
-            ThreadInfo pair = threads.get(tid);
-            if (pair == null) {
-                threads.put(tid, new ThreadInfo(pid, tid.toString(), "JavaThreads"));
-            }
-
-        }
-            break;
-        case "jvm:vmthread_start": { //$NON-NLS-1$
-            Long tid = getVtid(event);
-            Long pid = (Long) event.getContent().getField("context._vpid").getValue();
-            int pidQuark = ss.getQuarkAbsoluteAndAdd(pid.toString());
-            int vmthreadsQuark = ss.getQuarkRelativeAndAdd(pidQuark, "VMThreads");
-            int tidQuark = ss.getQuarkRelativeAndAdd(vmthreadsQuark, tid.toString());
-            int statusQuark = ss.getQuarkRelativeAndAdd(tidQuark, "User Status"); //$NON-NLS-1$
-            String threadname = event.getContent().getField("name").getValue().toString(); //$NON-NLS-1$
-            int nameQuark = ss.getQuarkRelativeAndAdd(tidQuark, "name"); //$NON-NLS-1$
-            ss.modifyAttribute(ts, TmfStateValue.newValueString(threadname), nameQuark);
-            ss.modifyAttribute(ts, TmfStateValue.nullValue(), statusQuark);
-            threads.put(tid, new ThreadInfo(pid, threadname, "VMThreads"));
-        }
-            break;
-        case "jvm:vmthread_stop": { //$NON-NLS-1$
-            Long pid = (Long) event.getContent().getField("context._vpid").getValue();
-            String targettid = event.getContent().getField("os_threadid").getValue().toString();
-            int pidQuark = ss.getQuarkAbsoluteAndAdd(pid.toString());
-            int vmthreadsQuark = ss.getQuarkRelativeAndAdd(pidQuark, "VMThreads");
-            int tidQuark = ss.getQuarkRelativeAndAdd(vmthreadsQuark, targettid);
-            int statusQuark = ss.getQuarkRelativeAndAdd(tidQuark, "User Status"); //$NON-NLS-1$
-            int nameQuark = ss.getQuarkRelativeAndAdd(tidQuark, "name"); //$NON-NLS-1$
-            ss.modifyAttribute(ts, TmfStateValue.nullValue(), nameQuark);
-            ss.modifyAttribute(ts, TmfStateValue.nullValue(), statusQuark);
-        }
-            break;
-        case "jvm:vmops_begin": { //$NON-NLS-1$
-            Long tid = getVtid(event);
-            Long pid = (Long) event.getContent().getField("context._vpid").getValue();
-            int pidQuark = ss.getQuarkAbsoluteAndAdd(pid.toString());
-            int vmthreadsQuark = ss.getQuarkRelativeAndAdd(pidQuark, "VMThreads");
-            int tidQuark = ss.getQuarkRelativeAndAdd(vmthreadsQuark, tid.toString());
-            int statusQuark = ss.getQuarkRelativeAndAdd(tidQuark, "User Status"); //$NON-NLS-1$
-            String operationName = event.getContent().getField("name").getValue().toString(); //$NON-NLS-1$
-            int infoQuark = ss.getQuarkRelativeAndAdd(tidQuark, "info"); //$NON-NLS-1$
-            ss.modifyAttribute(ts, TmfStateValue.newValueString(operationName), infoQuark);
-            ss.modifyAttribute(ts, TmfStateValue.newValueLong(1), statusQuark);
-        }
-            break;
-        case "jvm:vmops_end": { //$NON-NLS-1$
-            Long tid = getVtid(event);
-            Long pid = (Long) event.getContent().getField("context._vpid").getValue();
-            int pidQuark = ss.getQuarkAbsoluteAndAdd(pid.toString());
-            int vmthreadsQuark = ss.getQuarkRelativeAndAdd(pidQuark, "VMThreads");
-            int tidQuark = ss.getQuarkRelativeAndAdd(vmthreadsQuark, tid.toString());
-            int statusQuark = ss.getQuarkRelativeAndAdd(tidQuark, "User Status"); //$NON-NLS-1$
-            int infoQuark = ss.getQuarkRelativeAndAdd(tidQuark, "info"); //$NON-NLS-1$
-            ss.modifyAttribute(ts, TmfStateValue.nullValue(), infoQuark);
-            ss.modifyAttribute(ts, TmfStateValue.nullValue(), statusQuark);
-        }
-            break;
-
-        case "jvm:gctaskthread_start": { //$NON-NLS-1$
-            Long pid = (Long) event.getContent().getField("context._vpid").getValue();
-            Long targettid = (Long) event.getContent().getField("os_threadid").getValue();
-            int pidQuark = ss.getQuarkAbsoluteAndAdd(pid.toString());
-            int gcthreadsQuark = ss.getQuarkRelativeAndAdd(pidQuark, "GCThreads");
-            int tidQuark = ss.getQuarkRelativeAndAdd(gcthreadsQuark, targettid.toString());
-            int statusQuark = ss.getQuarkRelativeAndAdd(tidQuark, "User Status"); //$NON-NLS-1$
-            String threadname = event.getContent().getField("name").getValue().toString(); //$NON-NLS-1$
-            int nameQuark = ss.getQuarkRelativeAndAdd(tidQuark, "name"); //$NON-NLS-1$
-            ss.modifyAttribute(ts, TmfStateValue.newValueString(threadname), nameQuark);
-            ss.modifyAttribute(ts, TmfStateValue.nullValue(), statusQuark);
-            threads.put(targettid, new ThreadInfo(pid, threadname, "GCThreads"));
-        }
-            break;
-        case "jvm:gctask_start": { //$NON-NLS-1$
-            Long tid = getVtid(event);
-            Long pid = (Long) event.getContent().getField("context._vpid").getValue();
-            int pidQuark = ss.getQuarkAbsoluteAndAdd(pid.toString());
-            int gcthreadsQuark = ss.getQuarkRelativeAndAdd(pidQuark, "GCThreads");
-            int tidQuark = ss.getQuarkRelativeAndAdd(gcthreadsQuark, tid.toString());
-            int statusQuark = ss.getQuarkRelativeAndAdd(tidQuark, "User Status"); //$NON-NLS-1$
-            String operationName = event.getContent().getField("name").getValue().toString(); //$NON-NLS-1$
-            int infoQuark = ss.getQuarkRelativeAndAdd(tidQuark, "info"); //$NON-NLS-1$
-            ss.modifyAttribute(ts, TmfStateValue.newValueString(operationName), infoQuark);
-            ss.modifyAttribute(ts, TmfStateValue.newValueLong(2), statusQuark);
-        }
-            break;
-        case "jvm:gctask_end": { //$NON-NLS-1$
-            Long tid = getVtid(event);
-            Long pid = (Long) event.getContent().getField("context._vpid").getValue();
-            int pidQuark = ss.getQuarkAbsoluteAndAdd(pid.toString());
-            int gcthreadsQuark = ss.getQuarkRelativeAndAdd(pidQuark, "GCThreads");
-            int tidQuark = ss.getQuarkRelativeAndAdd(gcthreadsQuark, tid.toString());
-            int statusQuark = ss.getQuarkRelativeAndAdd(tidQuark, "User Status"); //$NON-NLS-1$
-            int infoQuark = ss.getQuarkRelativeAndAdd(tidQuark, "info"); //$NON-NLS-1$
-            ss.modifyAttribute(ts, TmfStateValue.nullValue(), infoQuark);
-            ss.modifyAttribute(ts, TmfStateValue.nullValue(), statusQuark);
-        }
-            break;
-        case "jvm:contended_enter": { //$NON-NLS-1$
-            Long tid = getVtid(event);
-            Long pid = (Long) event.getContent().getField("context._vpid").getValue();
-            String monitorName = event.getContent().getField("name").getValue().toString(); //$NON-NLS-1$
-            Long ptr = (Long) event.getContent().getField("ptr").getValue();
-            int pidQuark = ss.getQuarkAbsoluteAndAdd(pid.toString());
-            int contendedQuark = ss.getQuarkRelativeAndAdd(pidQuark, "Contention");
-            int monitorQuark = ss.getQuarkRelativeAndAdd(contendedQuark, ptr.toString());
-            int nameQuark = ss.getQuarkRelativeAndAdd(monitorQuark, "name"); //$NON-NLS-1$
-            ss.modifyAttribute(ts, TmfStateValue.newValueString(monitorName), nameQuark);
-            int threadsQuark = ss.getQuarkRelativeAndAdd(monitorQuark, "threads"); //$NON-NLS-1$
-            int tidQuark = ss.getQuarkRelativeAndAdd(threadsQuark, tid.toString());
-            String threadName;
-            ThreadInfo pair = threads.get(tid);
-            if (pair != null) {
-                threadName = pair.name;
-            } else {
-                threadName = tid.toString();
-            }
-            int threadNameQuark = ss.getQuarkRelativeAndAdd(tidQuark, "name"); //$NON-NLS-1$
-            int statusQuark = ss.getQuarkRelativeAndAdd(tidQuark, "User Status"); //$NON-NLS-1$
-            ss.modifyAttribute(ts, TmfStateValue.newValueLong(4), statusQuark);
-
-            ss.modifyAttribute(ts, TmfStateValue.newValueString(threadName), threadNameQuark);
-        }
-            break;
-        case "jvm:contended_entered": { //$NON-NLS-1$
-            Long tid = getVtid(event);
-            Long pid = (Long) event.getContent().getField("context._vpid").getValue();
-            Long ptr = (Long) event.getContent().getField("ptr").getValue();
-            int pidQuark = ss.getQuarkAbsoluteAndAdd(pid.toString());
-            int contendedQuark = ss.getQuarkRelativeAndAdd(pidQuark, "Contention");
-            int monitorQuark = ss.getQuarkRelativeAndAdd(contendedQuark, ptr.toString());
-            int threadsQuark = ss.getQuarkRelativeAndAdd(monitorQuark, "threads"); //$NON-NLS-1$
-            int tidQuark = ss.getQuarkRelativeAndAdd(threadsQuark, tid.toString());
-            int statusQuark = ss.getQuarkRelativeAndAdd(tidQuark, "User Status"); //$NON-NLS-1$
-            ss.modifyAttribute(ts, TmfStateValue.nullValue(), statusQuark);
-        }
-            break;
-        case "jvm:monitor_wait": { //$NON-NLS-1$
-            Long tid = getVtid(event);
-            Long pid = (Long) event.getContent().getField("context._vpid").getValue();
-            String monitorName = event.getContent().getField("name").getValue().toString(); //$NON-NLS-1$
-            Long ptr = (Long) event.getContent().getField("ptr").getValue();
-            int pidQuark = ss.getQuarkAbsoluteAndAdd(pid.toString());
-            int contendedQuark = ss.getQuarkRelativeAndAdd(pidQuark, "Monitor");
-            int monitorQuark = ss.getQuarkRelativeAndAdd(contendedQuark, ptr.toString());
-            int nameQuark = ss.getQuarkRelativeAndAdd(monitorQuark, "name"); //$NON-NLS-1$
-            ss.modifyAttribute(ts, TmfStateValue.newValueString(monitorName), nameQuark);
-            int threadsQuark = ss.getQuarkRelativeAndAdd(monitorQuark, "threads"); //$NON-NLS-1$
-            int tidQuark = ss.getQuarkRelativeAndAdd(threadsQuark, tid.toString());
-            String threadName;
-            ThreadInfo pair = threads.get(tid);
-            if (pair != null) {
-                threadName = pair.name;
-            } else {
-                threadName = tid.toString();
-            }
-            int threadNameQuark = ss.getQuarkRelativeAndAdd(tidQuark, "name"); //$NON-NLS-1$
-            int statusQuark = ss.getQuarkRelativeAndAdd(tidQuark, "User Status"); //$NON-NLS-1$
-            ss.modifyAttribute(ts, TmfStateValue.newValueLong(4), statusQuark);
-            ss.modifyAttribute(ts, TmfStateValue.newValueString(threadName), threadNameQuark);
-        }
-            break;
-        case "jvm:monitor_waited": { //$NON-NLS-1$
-            Long tid = getVtid(event);
-            Long pid = (Long) event.getContent().getField("context._vpid").getValue();
-            Long ptr = (Long) event.getContent().getField("ptr").getValue();
-            int pidQuark = ss.getQuarkAbsoluteAndAdd(pid.toString());
-            int contendedQuark = ss.getQuarkRelativeAndAdd(pidQuark, "Monitor");
-            int monitorQuark = ss.getQuarkRelativeAndAdd(contendedQuark, ptr.toString());
-            int threadsQuark = ss.getQuarkRelativeAndAdd(monitorQuark, "threads"); //$NON-NLS-1$
-            int tidQuark = ss.getQuarkRelativeAndAdd(threadsQuark, tid.toString());
-            int statusQuark = ss.getQuarkRelativeAndAdd(tidQuark, "User Status"); //$NON-NLS-1$
-            ss.modifyAttribute(ts, TmfStateValue.nullValue(), statusQuark);
-        }
-            break;
-        case "jvm:notify":
-        case "jvm:notifyAll": { //$NON-NLS-1$
-            Long tid = getVtid(event);
-            Long pid = (Long) event.getContent().getField("context._vpid").getValue();
-            String monitorName = event.getContent().getField("name").getValue().toString(); //$NON-NLS-1$
-            Long ptr = (Long) event.getContent().getField("ptr").getValue();
-            int pidQuark = ss.getQuarkAbsoluteAndAdd(pid.toString());
-            int contendedQuark = ss.getQuarkRelativeAndAdd(pidQuark, "Monitor");
-            int monitorQuark = ss.getQuarkRelativeAndAdd(contendedQuark, ptr.toString());
-            int nameQuark = ss.getQuarkRelativeAndAdd(monitorQuark, "name"); //$NON-NLS-1$
-            ss.modifyAttribute(ts, TmfStateValue.newValueString(monitorName), nameQuark);
-            int threadsQuark = ss.getQuarkRelativeAndAdd(monitorQuark, "threads"); //$NON-NLS-1$
-            int tidQuark = ss.getQuarkRelativeAndAdd(threadsQuark, tid.toString());
-            String threadName;
-            ThreadInfo pair = threads.get(tid);
-            if (pair != null) {
-                threadName = pair.name;
-            } else {
-                threadName = tid.toString();
-            }
-            int threadNameQuark = ss.getQuarkRelativeAndAdd(tidQuark, "name"); //$NON-NLS-1$
-            int statusQuark = ss.getQuarkRelativeAndAdd(tidQuark, "User Status"); //$NON-NLS-1$
-            ss.modifyAttribute(ts, TmfStateValue.newValueLong(100), statusQuark);
-            ss.modifyAttribute(ts, TmfStateValue.newValueString(threadName), threadNameQuark);
-            ss.modifyAttribute(ts + 100, TmfStateValue.nullValue(), statusQuark);
-        }
-            break;
-        case "jvm:method_compile_begin": { //$NON-NLS-1$
-            Long tid = getVtid(event);
-            Long pid = (Long) event.getContent().getField("context._vpid").getValue();
-            int pidQuark = ss.getQuarkAbsoluteAndAdd(pid.toString());
-            int vmthreadsQuark = ss.getQuarkRelativeAndAdd(pidQuark, "CompilerThreads");
-            int tidQuark = ss.getQuarkRelativeAndAdd(vmthreadsQuark, tid.toString());
-            int statusQuark = ss.getQuarkRelativeAndAdd(tidQuark, "User Status"); //$NON-NLS-1$
-            String methodName = event.getContent().getField("methodName").getValue().toString(); //$NON-NLS-1$
-            String className = event.getContent().getField("className").getValue().toString(); //$NON-NLS-1$
-            int infoQuark = ss.getQuarkRelativeAndAdd(tidQuark, "info"); //$NON-NLS-1$
-            ss.modifyAttribute(ts, TmfStateValue.newValueString(className + "/" + methodName), infoQuark);
-            ss.modifyAttribute(ts, TmfStateValue.newValueLong(3), statusQuark);
-        }
-            break;
-        case "jvm:method_compile_end": { //$NON-NLS-1$
-            Long tid = getVtid(event);
-            Long pid = (Long) event.getContent().getField("context._vpid").getValue();
-            int pidQuark = ss.getQuarkAbsoluteAndAdd(pid.toString());
-            int vmthreadsQuark = ss.getQuarkRelativeAndAdd(pidQuark, "CompilerThreads");
-            int tidQuark = ss.getQuarkRelativeAndAdd(vmthreadsQuark, tid.toString());
-            int statusQuark = ss.getQuarkRelativeAndAdd(tidQuark, "User Status"); //$NON-NLS-1$
-            int infoQuark = ss.getQuarkRelativeAndAdd(tidQuark, "info"); //$NON-NLS-1$
-            ss.modifyAttribute(ts, TmfStateValue.nullValue(), infoQuark);
-            ss.modifyAttribute(ts, TmfStateValue.nullValue(), statusQuark);
-        }
-            break;
-        case "sched_switch": { //$NON-NLS-1$
-            Long targettid = (Long) event.getContent().getField("next_tid").getValue();
-            String targetcomm = event.getContent().getField("next_comm").getValue().toString();
-            Long prevtid = (Long) event.getContent().getField("prev_tid").getValue();
-            ThreadInfo targetpair = threads.get(targettid);
-            if (targetpair != null) {
-                Long pid = targetpair.pid;
-                try {
-                    int pidQ = ss.getQuarkAbsolute(pid.toString());
-                    int threadsQuark = ss.getQuarkRelative(pidQ, targetpair.type);
-                    int tidQuark = ss.getQuarkRelative(threadsQuark, targettid.toString());
-                    int kernelstatusQuark = ss.getQuarkRelative(tidQuark, "Kernel Status"); //$NON-NLS-1$
-                    ss.modifyAttribute(ts, TmfStateValue.newValueLong(1001), kernelstatusQuark);
-                } catch (AttributeNotFoundException e) {
-                    e.printStackTrace();
-                }
-            }
-            ThreadInfo prevpair = threads.get(prevtid);
-            if (prevpair != null) {
-                Long pid = prevpair.pid;
-                try {
-                    int pidQ = ss.getQuarkAbsolute(pid.toString());
-                    int threadsQuark = ss.getQuarkRelative(pidQ, prevpair.type);
-                    int tidQuark = ss.getQuarkRelative(threadsQuark, prevtid.toString());
-                    int kernelstatusQuark = ss.getQuarkRelativeAndAdd(tidQuark, "Kernel Status"); //$NON-NLS-1$
-                    ss.modifyAttribute(ts, TmfStateValue.newValueLong(1002), kernelstatusQuark);
-                } catch (AttributeNotFoundException e) {
-                    e.printStackTrace();
-                }
-            }
-
-            int cpusQ = ss.getQuarkAbsoluteAndAdd("CPUs");
-            int cpuQ = ss.getQuarkRelativeAndAdd(cpusQ, String.valueOf(cpu));
-            int cpustatusQ = ss.getQuarkRelativeAndAdd(cpuQ, "status");
-            int cpuinfoQ = ss.getQuarkRelativeAndAdd(cpuQ, "info");
-            if (targettid != 0) {
-                ThreadInfo target = threads.get(targettid);
-                if (target != null) {
-                    switch (target.type) {
-                    case "JavaThreads":
-                        ss.modifyAttribute(ts, TmfStateValue.nullValue(), cpustatusQ);
-                        ss.modifyAttribute(ts + 1, TmfStateValue.newValueLong(1001), cpustatusQ);
-                        break;
-                    case "VMThreads":
-                        ss.modifyAttribute(ts, TmfStateValue.nullValue(), cpustatusQ);
-                        ss.modifyAttribute(ts + 1, TmfStateValue.newValueLong(1002), cpustatusQ);
-                        break;
-                    case "GCThreads":
-                        ss.modifyAttribute(ts, TmfStateValue.nullValue(), cpustatusQ);
-                        ss.modifyAttribute(ts + 1, TmfStateValue.newValueLong(1003), cpustatusQ);
-                        break;
-                    case "CompilerThreads":
-                        ss.modifyAttribute(ts, TmfStateValue.nullValue(), cpustatusQ);
-                        ss.modifyAttribute(ts + 1, TmfStateValue.newValueLong(1004), cpustatusQ);
-                        break;
-                    default:
-                        break;
-                    }
-                    ss.modifyAttribute(ts, TmfStateValue.newValueString(target.name + " (" + targettid.toString() + ")"), cpuinfoQ);
-                } else {
-                    ss.modifyAttribute(ts, TmfStateValue.newValueLong(1005), cpustatusQ);
-                    ss.modifyAttribute(ts, TmfStateValue.newValueString(targetcomm + " (" + targettid.toString() + ")"), cpuinfoQ);
-                }
-
-            } else {
-                ss.modifyAttribute(ts, TmfStateValue.nullValue(), cpustatusQ);
-            }
-
-        }
-            break;
-
         case "block_rq_insert": { //$NON-NLS-1$
-
-            Long tid = (Long) event.getContent().getField("context._tid").getValue();
-            Long disk = (Long) event.getContent().getField("dev").getValue();
-            Long sector = (Long) event.getContent().getField("sector").getValue();
-            Long size = (Long) event.getContent().getField("nr_sector").getValue();
-            String processname = event.getContent().getField("comm").getValue().toString();
-            if(disk.longValue()!=8388624) {
-                break;
-            }
-            if(sector.longValue() <= 0 || size.longValue() <= 0) {
-                break;
-            }
-
-
-            int ioQ = ss.getQuarkAbsoluteAndAdd("IO");
-            int diskQ = ss.getQuarkRelativeAndAdd(ioQ, "sdb");
-            if (pile ==null) {
-                pile = new Pile(ss, diskQ);
-            }
-
-            ThreadInfo target = threads.get(tid);
-            if (target != null) {
-                pile.insert(sector, ts, size, processname,true);
+            Long tid = (Long) event.getContent().getField("context._tid").getValue(); //$NON-NLS-1$
+            Long dev = (Long) event.getContent().getField("dev").getValue(); //$NON-NLS-1$
+            Long sector = (Long) event.getContent().getField("sector").getValue(); //$NON-NLS-1$
+            Long nr_sector = (Long) event.getContent().getField("nr_sector").getValue(); //$NON-NLS-1$
+            DiskInfo diskinfo;
+            if (hostinfo.disks_info.containsKey(dev)) {
+                diskinfo = hostinfo.disks_info.get(dev);
             } else {
-                pile.insert(sector, ts, size, processname,false);
+                diskinfo = new DiskInfo(dev);
+                hostinfo.disks_info.put(dev, diskinfo);
             }
+
+            diskinfo.sectors.put(sector, new SectorInfo(sector, ts, nr_sector));
         }
             break;
-
         case "block_rq_complete": { //$NON-NLS-1$
-            Long tid = (Long) event.getContent().getField("context._tid").getValue();
-            Long disk = (Long) event.getContent().getField("dev").getValue();
-            Long sector = (Long) event.getContent().getField("sector").getValue();
-            Long size = (Long) event.getContent().getField("nr_sector").getValue();
-            if(disk.longValue()!=8388624) {
-                break;
+            Long dev = (Long) event.getContent().getField("dev").getValue(); //$NON-NLS-1$
+            Long sector = (Long) event.getContent().getField("sector").getValue(); //$NON-NLS-1$
+            if (hostinfo.disks_info.containsKey(dev)) {
+                DiskInfo diskinfo = hostinfo.disks_info.get(dev);
+                if (diskinfo.sectors.containsKey(sector)) {
+                    SectorInfo sect = diskinfo.sectors.get(sector);
+                    sect.ts_end = ts;
+                    // System.out.println("sector " + sector + " is completed at " + ts);
+                }
             }
-            if(sector.longValue() <= 0 || size.longValue() <= 0) {
-                break;
-            }
-
-
-            pile.remove(sector, ts);
-
         }
             break;
+
+        case "net_dev_queue": { //$NON-NLS-1$
+            Long tid = (Long) event.getContent().getField("context._tid").getValue(); //$NON-NLS-1$
+            String daddr = event.getContent().getField("network_header").getField("ipv4").getField("daddr").toString().replaceAll("\\s+", ""); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            daddr = daddr.split("daddr=")[1].split("\\[")[1].split("\\]")[0]; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            daddr = daddr.replace(",", ".");
+            String saddr = event.getContent().getField("network_header").getField("ipv4").getField("saddr").toString().replaceAll("\\s+", ""); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            saddr = saddr.split("saddr=")[1].split("\\[")[1].split("\\]")[0]; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            saddr = saddr.replace(",", ".");
+            String net_interface = (String) event.getContent().getField("name").getValue(); //$NON-NLS-1$
+            net_interface = saddr;
+            //Long dest_port = (Long)event.getContent().getField("network_header").getField("ipv4").getField("transport_header").getField("tcp").getField("dest_port").getValue();
+            Long size = (Long) event.getContent().getField("len").getValue(); //$NON-NLS-1$
+
+            NetworkInfo netinfo;
+            if (hostinfo.networks_info.containsKey(net_interface)) {
+                netinfo = hostinfo.networks_info.get(net_interface);
+            } else {
+                netinfo = new NetworkInfo(net_interface);
+                hostinfo.networks_info.put(net_interface, netinfo);
+            }
+
+            netinfo.packets.add(new PacketInfo(daddr, size));
+        }
+            break;
+        case "osd:opwq_process_start": { //$NON-NLS-1$
+            Long tid = (Long) event.getContent().getField("context._vtid").getValue(); //$NON-NLS-1$
+            Long pid = (Long) event.getContent().getField("context._vpid").getValue(); //$NON-NLS-1$
+            int hostQuark = ss.getQuarkAbsoluteAndAdd(hostname);
+            int pidQuark = ss.getQuarkRelativeAndAdd(hostQuark, pid.toString());
+            int tidQuark = ss.getQuarkRelativeAndAdd(pidQuark, tid.toString());
+            int statusQuark = ss.getQuarkRelativeAndAdd(tidQuark, "status"); //$NON-NLS-1$
+            ss.modifyAttribute(ts, TmfStateValue.newValueInt(1), statusQuark);
+        }
+            break;
+        case "osd:opwq_process_finish": { //$NON-NLS-1$
+            Long tid = (Long) event.getContent().getField("context._vtid").getValue(); //$NON-NLS-1$
+            Long pid = (Long) event.getContent().getField("context._vpid").getValue(); //$NON-NLS-1$
+            int hostQuark = ss.getQuarkAbsoluteAndAdd(hostname);
+            int pidQuark = ss.getQuarkRelativeAndAdd(hostQuark, pid.toString());
+            int tidQuark = ss.getQuarkRelativeAndAdd(pidQuark, tid.toString());
+            int statusQuark = ss.getQuarkRelativeAndAdd(tidQuark, "status"); //$NON-NLS-1$
+            ss.modifyAttribute(ts, TmfStateValue.nullValue(), statusQuark);
+        }
+            break;
+        case "bfd_fsm__state_change": { //$NON-NLS-1$
+            Long session_id = (Long) event.getContent().getField("sid_m").getValue(); //$NON-NLS-1$
+            String nxt_state =  ((CtfEnumPair) event.getContent().getField("next_state").getValue()).getStringValue(); //$NON-NLS-1$
+            int hostQuark = ss.getQuarkAbsoluteAndAdd("bfd_fsm_sid");
+            int sessionQuark = ss.getQuarkRelativeAndAdd(hostQuark, String.format("%03d",session_id));
+            int statusQuark = ss.getQuarkRelativeAndAdd(sessionQuark, "status"); //$NON-NLS-1$
+            if (nxt_state.equalsIgnoreCase("Init")) {
+            ss.modifyAttribute(ts, TmfStateValue.newValueInt(11), statusQuark);
+            }
+            if (nxt_state.equalsIgnoreCase("Down")) {
+            ss.modifyAttribute(ts, TmfStateValue.newValueInt(12), statusQuark);
+            }
+            if (nxt_state.equalsIgnoreCase("Up")) {
+            ss.modifyAttribute(ts, TmfStateValue.newValueInt(13), statusQuark);
+            }
+        }
+            break;
+
+        case "hal__oam_prot_group": { //$NON-NLS-1$
+            Long session_id = (Long) event.getContent().getField("prot_id").getValue(); //$NON-NLS-1$
+            Long nxt_state =  (Long) event.getContent().getField("cur_stat_id").getValue();
+            int hostQuark = ss.getQuarkAbsoluteAndAdd("hal__oam_prot_group");
+            int sessionQuark = ss.getQuarkRelativeAndAdd(hostQuark, String.format("%03d",session_id));
+            int statusQuark = ss.getQuarkRelativeAndAdd(sessionQuark, "status"); //$NON-NLS-1$
+            ss.modifyAttribute(ts, TmfStateValue.newValueLong(nxt_state), statusQuark);
+            }
+                break;
+
+        case "zipkin:timestamp": { //$NON-NLS-1$
+            // Long tid = (Long) event.getContent().getField("context._vtid").getValue();
+            // //$NON-NLS-1$
+            Long pid = (Long) event.getContent().getField("context._vpid").getValue(); //$NON-NLS-1$
+            String eventStr = (String) event.getContent().getField("event").getValue();
+            int hostQuark = ss.getQuarkAbsoluteAndAdd(hostname);
+            switch (eventStr) {
+            case "async enqueueing message": {
+                int pidQuark = ss.getQuarkRelativeAndAdd(hostQuark, pid.toString());
+                int tidQuark = ss.getQuarkRelativeAndAdd(pidQuark, "msg");
+                int statusQuark = ss.getQuarkRelativeAndAdd(tidQuark, "status"); //$NON-NLS-1$
+                ss.modifyAttribute(ts, TmfStateValue.newValueInt(2), statusQuark);
+            }
+                break;
+            case "async writing message": {
+                int pidQuark = ss.getQuarkRelativeAndAdd(hostQuark, pid.toString());
+                int tidQuark = ss.getQuarkRelativeAndAdd(pidQuark, "msg");
+                int statusQuark = ss.getQuarkRelativeAndAdd(tidQuark, "status"); //$NON-NLS-1$
+                ss.modifyAttribute(ts, TmfStateValue.newValueInt(3), statusQuark);
+            }
+                break;
+            case "osd op reply": {
+                int pidQuark = ss.getQuarkRelativeAndAdd(hostQuark, pid.toString());
+                int tidQuark = ss.getQuarkRelativeAndAdd(pidQuark, "msg");
+                int statusQuark = ss.getQuarkRelativeAndAdd(tidQuark, "status"); //$NON-NLS-1$
+                ss.updateOngoingState(TmfStateValue.newValueInt(4), statusQuark);
+            }
+                break;
+            case "finish": {
+                int pidQuark = ss.getQuarkRelativeAndAdd(hostQuark, pid.toString());
+                int tidQuark = ss.getQuarkRelativeAndAdd(pidQuark, "msg");
+                int statusQuark = ss.getQuarkRelativeAndAdd(tidQuark, "status"); //$NON-NLS-1$
+                ss.modifyAttribute(ts, TmfStateValue.nullValue(), statusQuark);
+            }
+                break;
+            case "message destructed": {
+                int pidQuark = ss.getQuarkRelativeAndAdd(hostQuark, pid.toString());
+                int tidQuark = ss.getQuarkRelativeAndAdd(pidQuark, "msg");
+                int statusQuark = ss.getQuarkRelativeAndAdd(tidQuark, "status"); //$NON-NLS-1$
+                ss.modifyAttribute(ts, TmfStateValue.nullValue(), statusQuark);
+            }
+                break;
+
+            default:
+                /* Ignore other event types */
+                break;
+            }
+        }
+            break;
+
         default:
             /* Ignore other event types */
             break;
@@ -519,11 +470,11 @@ public class JavaStateProvider extends AbstractTmfStateProvider {
          * @param ts
          */
         public void insert(Long sector, long ts, Long size, String processname, boolean isjava) {
-            if(sector.longValue()==738877456) {
+            if (sector.longValue() == 738877456) {
                 return;
             }
             String name = processname;
-            if(name.equals("fio")) {
+            if (name.equals("fio")) {
                 name = "update.py";
             }
             Long position = findFirstAvailable();
@@ -534,10 +485,10 @@ public class JavaStateProvider extends AbstractTmfStateProvider {
             int infoQ = ss.getQuarkRelativeAndAdd(slotQ, "info");
             if (isjava) {
                 ss.modifyAttribute(ts, TmfStateValue.newValueLong(1001), statusQ);
-                ss.modifyAttribute(ts, TmfStateValue.newValueString(name+" ("+String.valueOf(size/2)+"KB)"),  infoQ);
+                ss.modifyAttribute(ts, TmfStateValue.newValueString(name + " (" + String.valueOf(size / 2) + "KB)"), infoQ);
             } else {
                 ss.modifyAttribute(ts, TmfStateValue.newValueLong(1002), statusQ);
-                ss.modifyAttribute(ts, TmfStateValue.newValueString(name+" ("+String.valueOf(size/2)+"KB)"),  infoQ);
+                ss.modifyAttribute(ts, TmfStateValue.newValueString(name + " (" + String.valueOf(size / 2) + "KB)"), infoQ);
             }
             num_elements++;
         }
@@ -548,7 +499,7 @@ public class JavaStateProvider extends AbstractTmfStateProvider {
          */
         public void remove(Long sector, long ts) {
             Long position = requests.get(sector);
-                if (position != null) {
+            if (position != null) {
                 requests.put(position, null);
                 queue.put(position, null);
                 int slotQ = ss.getQuarkRelativeAndAdd(diskQ, String.format("%03d", position));
